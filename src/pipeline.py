@@ -12,7 +12,9 @@ Useful docs:
   - HuggingFace pipelines: https://python.langchain.com/docs/integrations/llms/huggingface_pipelines/
 """
 
+import argparse
 import os
+import sys
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 from src.knowledge_base import build_knowledge_base
 
@@ -55,9 +57,6 @@ Client question: {question}
 Answer:"""
 
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# TODO 1: Implement ask_question
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 def ask_question(vector_store, llm, question: str) -> dict:
     """Retrieve relevant chunks and generate an answer.
 
@@ -80,14 +79,32 @@ def ask_question(vector_store, llm, question: str) -> dict:
             "answer"  -> str: the generated answer
             "sources" -> list[str]: the chunk texts that were retrieved
     """
-    # TODO: implement this (~6-8 lines)
-    raise NotImplementedError("TODO 1: Implement ask_question")
+    question = (question or "").strip()
+    if not question:
+        return {"answer": "Please enter a question.", "sources": []}
+
+    docs = vector_store.similarity_search(question, k=3)
+    sources = [doc.page_content for doc in docs]
+    context = "\n\n".join(sources)
+    prompt = PROMPT_TEMPLATE.format(context=context, question=question)
+    result = llm(prompt)
+    answer = result[0]["generated_text"]
+    return {"answer": answer, "sources": sources}
 
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# TODO 2: Complete the interactive loop
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-def main():
+def print_result(result: dict) -> None:
+    sources = result.get("sources") or []
+    if sources:
+        print("\n📄 Sources:")
+        for i, source in enumerate(sources, start=1):
+            preview = " ".join(source.split())
+            if len(preview) > 160:
+                preview = preview[:157] + "..."
+            print(f"  {i}. {preview}")
+    print(f"\n💬 Answer: {result['answer']}\n")
+
+
+def main(argv=None) -> None:
     """Interactive Q&A loop.
 
     Steps:
@@ -100,10 +117,53 @@ def main():
          - Calls ask_question() with their input
          - Prints the retrieved sources and the answer
     """
-    data_dir = os.path.join(os.path.dirname(__file__), "..", "data")
+    parser = argparse.ArgumentParser(description="Marketing agency Q&A chatbot")
+    parser.add_argument("--query", "-q", help="Ask a single question and exit")
+    parser.add_argument("--data-dir", default=None, help="Path to the documents folder")
+    args = parser.parse_args(argv)
 
-    # TODO: implement this (~10-12 lines)
-    raise NotImplementedError("TODO 2: Complete the interactive loop")
+    data_dir = args.data_dir or os.path.join(os.path.dirname(__file__), "..", "data")
+    data_dir = os.path.abspath(data_dir)
+
+    if not os.path.isdir(data_dir):
+        print(f"Error: data directory not found: {data_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    txt_files = [f for f in os.listdir(data_dir) if f.endswith(".txt")]
+    if not txt_files:
+        print(f"Error: no .txt files found in {data_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    vector_store = build_knowledge_base(data_dir)
+    llm = get_llm()
+
+    if args.query is not None:
+        question = args.query.strip()
+        if not question:
+            print("Error: --query cannot be empty.", file=sys.stderr)
+            sys.exit(1)
+        print_result(ask_question(vector_store, llm, question))
+        return
+
+    print("Ask a question about our services, pricing, or process.")
+    print("Type 'quit' to exit.\n")
+
+    while True:
+        try:
+            question = input("> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nGoodbye!")
+            break
+
+        if not question:
+            print("Please enter a question, or type 'quit' to exit.\n")
+            continue
+
+        if question.lower() == "quit":
+            print("Goodbye!")
+            break
+
+        print_result(ask_question(vector_store, llm, question))
 
 
 if __name__ == "__main__":
